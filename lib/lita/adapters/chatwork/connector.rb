@@ -19,38 +19,50 @@ module Lita
           raise "api_key is required." unless @api_key
           ChatWork.api_key = @api_key
 
-          define_robot
+          @logger = Lita.logger
 
           loop do
+            # '---- loop start ----'
             wait
             result = ChatWork::Room.get
+            # 'limit: ' + "#{result[1]}"
+            sleep 10 if result[1].to_i < 30
+            result = result[0]
             if result.is_a?(ChatWork::APIError)
               @logger.error "ChatWork::Room.get result: #{result} (#{result.message})"
               break
             end
+            # '---- rooms: ' + "#{result.count}"
+
+            define_robot
 
             joined_rooms = result.select{|r| r["sticky"] }
             unread_rooms = result.select{|r| r["unread_num"] > 0 }
             (joined_rooms | unread_rooms).each do |r|
               wait
               result = ChatWork::Message.get(room_id: r["room_id"])
-              next if result.is_a?(ChatWork::APIError) and result.message == "204"
+              # 'limit: ' + "#{result[1]}"
+              sleep 10 if result[1].to_i < 30
+              result = result[0]
+              next if result.is_a?(ChatWork::APIError)
+              # '---- results: ' + "#{result.count}"
+
               result.each do |m|
                 next if m["account"]["account_id"] == @me["account_id"]
                 user = Lita::User.find_by_id(m["account"]["account_id"])
                 unless user
                   user = Lita::User.create(m["account"]["account_id"],
                                            m["account"].merge("mention_name" =>
-                                           "[To:#{m["account"]["account_id"]}] #{m["account"]["name"]}さん"))
+                                                              "[To:#{m["account"]["account_id"]}] #{m["account"]["name"]}さん"))
                 end
                 source_id = [r["room_id"], m["message_id"], m["send_time"], m["update-time"]].join("-")
                 case r["type"]
-                  when "my"
-                    next
-                  when "direct"
-                    source = Lita::Source.new(user: user, room: source_id, private_message: true)
-                  else # "group"
-                    source = Lita::Source.new(user: user, room: source_id)
+                when "my"
+                  next
+                when "direct"
+                  source = Lita::Source.new(user: user, room: source_id, private_message: true)
+                else # "group"
+                  source = Lita::Source.new(user: user, room: source_id)
                 end
                 message = Lita::Message.new(robot, m["body"], source)
                 message.command! if source.private_message?
@@ -65,12 +77,15 @@ module Lita
         def message(target, strings)
           text = strings.join("\n")
           room_id, message_id, send_time, update_time = target.room.split("-")
+          wait
           if target.user
             reply_text = "[rp aid=#{target.user.id} to=#{room_id}-#{message_id}] #{target.user.name}さん\n#{text}"
-            ChatWork::Message.create(room_id: room_id, body: reply_text)
+            result = ChatWork::Message.create(room_id: room_id, body: reply_text)
           else
-            ChatWork::Message.create(room_id: room_id, body: text)
+            result = ChatWork::Message.create(room_id: room_id, body: text)
           end
+          # 'limit: ' + "#{result[1]}"
+          sleep 10 if result[1].to_i < 30
         end
 
         def set_topic(target, topic)
@@ -85,7 +100,11 @@ module Lita
 
         def define_robot
           begin
-            @me = ChatWork::Me.get
+            wait
+            result = ChatWork::Me.get
+            # 'limit: ' + "#{result[1]}"
+            sleep 10 if result[1].to_i < 30
+            @me = result[0]
             @robot.name = @me["name"]
             @robot.mention_name = "[To:#{@me["account_id"]}]"
           end
